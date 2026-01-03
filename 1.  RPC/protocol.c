@@ -23,6 +23,41 @@ static uint8_t Calculate_Checksum(Packet *pkt) {
     return sum;
 }
 
+/* Add this to protocol.c */
+
+// Function to send a full data packet FROM MCU TO LINUX
+void Send_Data_Packet(uint8_t cmd_id, uint8_t *data, uint8_t len) {
+    
+    // 1. Create a temporary buffer for the packet
+    // Size = Start(1) + Cmd(1) + Len(1) + Payload(len) + Checksum(1)
+    uint8_t tx_buffer[15]; 
+    
+    // 2. Fill the Header
+    tx_buffer[0] = PACKET_START; // 0xAA
+    tx_buffer[1] = cmd_id;
+    tx_buffer[2] = len;
+    
+    // 3. Fill the Payload
+    for (int i = 0; i < len; i++) {
+        tx_buffer[3 + i] = data[i];
+    }
+    
+    // 4. Calculate Checksum (Same logic as receiving!)
+    uint8_t sum = 0;
+    sum += tx_buffer[0];
+    sum += tx_buffer[1];
+    sum += tx_buffer[2];
+    for (int i = 0; i < len; i++) {
+        sum += tx_buffer[3 + i];
+    }
+    
+    // 5. Add Checksum at the end
+    tx_buffer[3 + len] = sum;
+    
+    // 6. Send it out! (Total length = 4 + len)
+    HAL_UART_Transmit(&huart1, tx_buffer, 4 + len, 50);
+}
+
 // 2. Feedback: Send 1 byte back to Linux
 static void Send_Response(uint8_t response_code) {
     // Blocking transmit is fine here for 1 byte (takes microseconds)
@@ -30,20 +65,31 @@ static void Send_Response(uint8_t response_code) {
 }
 
 // 3. Action: Actually do the work
+/* Update this function in protocol.c */
+
 static void Execute_Command(Packet pkt) {
     switch(pkt.cmd_id) {
-        case 0x01: // Example: Control LED
-            // Payload[0] determines ON (1) or OFF (0)
-            if (pkt.payload[0] == 1) {
-                HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-            } else {
-                HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-            }
-            break;
-            
-        case 0x02: // Example: Another command (Motor, Sensor, etc.)
-            // Add your custom logic here
-            break;
+        
+        // --- CASE A: SETTER (Linux sends data to us) ---
+        case 0x01: // Set LED
+             if (pkt.payload[0] == 1) HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, 1);
+             else HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, 0);
+             break;
+
+        // --- CASE B: GETTER (We send data to Linux) ---
+        case 0x03: // "Get Temperature"
+             // 1. Read the hardware sensor (Simulated here)
+             float temp_f = 25.5; 
+             
+             // 2. Convert float to bytes (Raw memory copy)
+             // We use a union or pointer cast to treat float as 4 bytes
+             uint8_t temp_bytes[4];
+             memcpy(temp_bytes, &temp_f, 4);
+             
+             // 3. Send the packet back to Linux
+             // ID = 0x03 (Reply), Payload = 4 bytes of float data
+             Send_Data_Packet(0x03, temp_bytes, 4);
+             break;
     }
 }
 
